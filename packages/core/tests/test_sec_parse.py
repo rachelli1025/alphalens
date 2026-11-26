@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 
 import pytest
@@ -74,3 +75,12 @@ def test_sentence_starting_with_item_is_not_a_heading() -> None:
 
 def test_no_headings_returns_empty() -> None:
     assert split_10k_items("just some text\nwith no items") == []
+
+
+def test_xhtml_with_xml_declaration_does_not_warn() -> None:
+    # SEC iXBRL files start with <?xml ...?> and a long comment before <html>,
+    # which makes BeautifulSoup emit XMLParsedAsHTMLWarning.
+    html = '<?xml version="1.0"?><!--' + "x" * 600 + "--><html><body><p>hi</p></body></html>"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # turn any warning into an exception
+        assert html_to_text(html) == "hi"

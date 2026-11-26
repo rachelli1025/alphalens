@@ -7,10 +7,11 @@ we pick the chain of headings that produces substantial sections (see
 """
 
 import re
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag, XMLParsedAsHTMLWarning
 
 # Item codes of Form 10-K in document order.
 ITEM_ORDER = [
@@ -48,7 +49,11 @@ def html_to_text(html: str) -> str:
     Inline elements (including iXBRL number tags) stay inline, so sentences
     such as "net sales of $391.0 billion" are not broken apart.
     """
-    soup = BeautifulSoup(html, "lxml")
+    # SEC iXBRL files are XHTML with an XML declaration; we deliberately parse them
+    # as HTML (hidden-element handling, plain-HTML filings), so the warning is noise.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style", "head"]):
         tag.decompose()
     # iXBRL metadata lives in a hidden <ix:header>; drop every hidden element.
