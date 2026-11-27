@@ -1,12 +1,15 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 class Settings(BaseSettings):
     """Process-wide settings, read from environment variables (and .env if present)."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(REPO_ROOT_ENV, ".env"), extra="ignore")
 
     database_url: str = "postgresql+psycopg://alphalens:alphalens@localhost:5432/alphalens"
     redis_url: str = "redis://localhost:6379/0"
