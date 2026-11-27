@@ -8,11 +8,9 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, delete, func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
-from alphalens_core.config import get_settings
 from alphalens_core.db.models import Chunk, Company, Filing, FilingSection
 from alphalens_core.embeddings import InputType
 from alphalens_core.ingest import ingest_latest_filing
@@ -58,14 +56,8 @@ class FakeEmbedder:
 
 
 @pytest.fixture
-def session() -> Iterator[Session]:
-    engine = create_engine(get_settings().database_url, connect_args={"connect_timeout": 2})
-    try:
-        with engine.connect() as conn:
-            if conn.scalar(text("SELECT to_regclass('chunks')")) is None:
-                pytest.skip("database not migrated")
-    except OperationalError:
-        pytest.skip("no database reachable")
+def session(pg_engine: Engine) -> Iterator[Session]:
+    engine = pg_engine
 
     def cleanup(s: Session) -> None:
         s.execute(delete(Filing).where(Filing.accession_no == ACCESSION))  # cascades
@@ -77,7 +69,6 @@ def session() -> Iterator[Session]:
         yield s
         s.rollback()
         cleanup(s)
-    engine.dispose()
 
 
 def _counts(s: Session) -> tuple[int, int]:

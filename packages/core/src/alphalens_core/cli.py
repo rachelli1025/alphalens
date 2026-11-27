@@ -2,16 +2,21 @@
 
 uv run alphalens ingest AAPL            # latest 10-K
 uv run alphalens ingest AAPL --force    # rebuild sections and chunks
+uv run alphalens ask "What are Apple's main supply chain risks?" --ticker AAPL
 """
 
 import argparse
 import logging
 import sys
 
+import anthropic
+
+from alphalens_core.answer import Answer, answer_question
 from alphalens_core.config import get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import VoyageEmbedder
 from alphalens_core.ingest import ingest_latest_filing
+from alphalens_core.retrieval import hybrid_search
 from alphalens_core.sec import EdgarClient
 
 
@@ -37,6 +42,50 @@ def _ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_answer(answer: Answer) -> None:
+    """Answer text with [n] markers, then the numbered sources they point to."""
+    sources: dict[int, int] = {}  # chunk_id -> source number
+    out = []
+    for part in answer.parts:
+        out.append(part.text)
+        marks = []
+        for c in part.citations:
+            n = sources.setdefault(c.chunk.chunk_id, len(sources) + 1)
+            if f"[{n}]" not in marks:
+                marks.append(f"[{n}]")
+        out.append("".join(marks))
+    print("".join(out).strip())
+
+    if sources:
+        print("\nSources:")
+        by_id = {c.chunk.chunk_id: c.chunk for p in answer.parts for c in p.citations}
+        for chunk_id, n in sources.items():
+            chunk = by_id[chunk_id]
+            print(f"  [{n}] {chunk.context_header}  {chunk.url}")
+    print(f"\n({answer.model}, {answer.input_tokens} in / {answer.output_tokens} out tokens)")
+
+
+def _ask(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    with (
+        VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder,
+        get_sync_sessionmaker()() as session,
+    ):
+        chunks = hybrid_search(session, embedder, args.question, tickers=args.ticker, k=args.k)
+
+    if args.show_chunks:
+        for i, c in enumerate(chunks, 1):
+            print(
+                f"{i}. score={c.score:.4f} vec_rank={c.vec_rank} kw_rank={c.kw_rank} "
+                f"{c.context_header}\n   {c.content[:150]!r}"
+            )
+        print()
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+    _print_answer(answer_question(client, settings.agent_model, args.question, chunks))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alphalens")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -46,6 +95,13 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--form", default="10-K")
     ingest.add_argument("--force", action="store_true", help="rebuild even if already embedded")
     ingest.set_defaults(func=_ingest)
+
+    ask = sub.add_parser("ask", help="answer a question from ingested filings, with citations")
+    ask.add_argument("question")
+    ask.add_argument("--ticker", action="append", help="restrict to a company (repeatable)")
+    ask.add_argument("-k", type=int, default=8, help="number of passages given to Claude")
+    ask.add_argument("--show-chunks", action="store_true", help="print the retrieved passages")
+    ask.set_defaults(func=_ask)
 
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
