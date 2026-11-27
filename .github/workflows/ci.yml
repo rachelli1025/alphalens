@@ -32,6 +32,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://alphalens:alphalens@localhost:5432/alphalens
+      # DB integration tests only run against this throwaway database (tests/conftest.py).
+      TEST_DATABASE_URL: postgresql+psycopg://alphalens:alphalens@localhost:5432/alphalens
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.4.0
