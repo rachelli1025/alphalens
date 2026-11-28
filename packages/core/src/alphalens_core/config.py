@@ -3,7 +3,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+REPO_ROOT = Path(__file__).resolve().parents[4]  # valid in a source checkout
+REPO_ROOT_ENV = REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):

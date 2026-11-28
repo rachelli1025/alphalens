@@ -3,20 +3,23 @@
 uv run alphalens ingest AAPL            # latest 10-K
 uv run alphalens ingest AAPL --force    # rebuild sections and chunks
 uv run alphalens ask "What are Apple's main supply chain risks?" --ticker AAPL
+uv run alphalens eval-retrieval                 # Recall@8 / MRR for hybrid, vector, keyword
+uv run alphalens eval-retrieval --check-labels  # verify golden-set phrases exist (no API calls)
 """
 
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 import anthropic
 
 from alphalens_core.answer import Answer, answer_question
-from alphalens_core.config import get_settings
+from alphalens_core.config import REPO_ROOT, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import VoyageEmbedder
 from alphalens_core.ingest import ingest_latest_filing
-from alphalens_core.retrieval import hybrid_search
+from alphalens_core.retrieval import RetrievedChunk, SearchMode, hybrid_search
 from alphalens_core.sec import EdgarClient
 
 
@@ -91,6 +94,68 @@ def _ask(args: argparse.Namespace) -> int:
     return 0
 
 
+DEFAULT_DATASET = REPO_ROOT / "evals" / "datasets" / "retrieval_aapl.yaml"
+
+
+def _check_labels(cases: list, session) -> int:  # type: ignore[type-arg, no-untyped-def]
+    """Count chunks matching each label; 0 means a typo or a phrase not in the filing."""
+    from sqlalchemy import text
+
+    from alphalens_core.evals.retrieval import normalize
+
+    rows = session.execute(
+        text(
+            "SELECT s.item_code, c.content FROM chunks c "
+            "JOIN filing_sections s ON s.id = c.section_id"
+        )
+    ).all()
+    bad = 0
+    for case in cases:
+        for label in case.relevant:
+            n = sum(
+                item.upper() == label.item.upper()
+                and normalize(label.contains) in normalize(content)
+                for item, content in rows
+            )
+            flag = "OK " if n else "MISSING"
+            bad += n == 0
+            print(f"{flag} {case.id:28} item {label.item:3} {n:2} chunk(s)  {label.contains!r}")
+    print(f"\n{bad} label(s) match no chunk." if bad else "\nAll labels match at least one chunk.")
+    return 1 if bad else 0
+
+
+def _eval_retrieval(args: argparse.Namespace) -> int:
+    from alphalens_core.evals.retrieval import evaluate, load_cases
+
+    cases = load_cases(Path(args.dataset))
+    settings = get_settings()
+    with get_sync_sessionmaker()() as session:
+        if args.check_labels:
+            return _check_labels(cases, session)
+
+        with VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder:
+
+            def search(
+                question: str, tickers: list[str] | None, k: int, mode: SearchMode
+            ) -> list[RetrievedChunk]:
+                return hybrid_search(session, embedder, question, tickers=tickers, k=k, mode=mode)
+
+            reports = [evaluate(cases, search, mode=m, k=args.k) for m in args.modes]
+
+    print(f"{len(cases)} cases, k={args.k}\n")
+    print(f"{'mode':10} {'Recall@' + str(args.k):>10} {'MRR':>7}")
+    for r in reports:
+        print(f"{r.mode:10} {r.recall_at_k:>10.2f} {r.mrr:>7.2f}")
+
+    print(f"\nRank of first relevant chunk (- = not in top {args.k}):")
+    print(f"{'case':28} {'tags':12} " + " ".join(f"{r.mode:>8}" for r in reports))
+    for i, case in enumerate(cases):
+        ranks = [r.results[i].first_relevant_rank for r in reports]
+        cells = " ".join(f"{(str(x) if x else '-'):>8}" for x in ranks)
+        print(f"{case.id:28} {','.join(case.tags):12} {cells}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alphalens")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -109,6 +174,20 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--model", help="override ANSWER_MODEL, e.g. claude-opus-5-5")
     ask.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     ask.set_defaults(func=_ask)
+
+    ev = sub.add_parser("eval-retrieval", help="Recall@k and MRR on the retrieval golden set")
+    ev.add_argument("--dataset", default=str(DEFAULT_DATASET))
+    ev.add_argument("-k", type=int, default=8)
+    ev.add_argument(
+        "--modes",
+        nargs="+",
+        choices=["hybrid", "vector", "keyword"],
+        default=["hybrid", "vector", "keyword"],
+    )
+    ev.add_argument(
+        "--check-labels", action="store_true", help="verify label phrases; no API calls"
+    )
+    ev.set_defaults(func=_eval_retrieval)
 
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)

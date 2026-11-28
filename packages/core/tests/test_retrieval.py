@@ -148,3 +148,20 @@ def test_unknown_ticker_returns_nothing(session: Session) -> None:
 
 def test_k_limits_results(session: Session) -> None:
     assert len(hybrid_search(session, QueryEmbedder(), "supply chain", tickers=["TSTA"], k=2)) == 2
+
+
+def test_vector_mode_ignores_keyword_matches(session: Session) -> None:
+    results = hybrid_search(
+        session, QueryEmbedder(), "supply chain risk", tickers=["TSTA"], mode="vector"
+    )
+    assert all(r.kw_rank is None for r in results)
+    assert results[0].vec_rank == 1
+
+
+def test_keyword_mode_returns_only_keyword_matches(session: Session) -> None:
+    results = hybrid_search(
+        session, QueryEmbedder(), "supply chain risk", tickers=["TSTA"], mode="keyword"
+    )
+    assert results
+    assert all(r.kw_rank is not None and r.vec_rank is None for r in results)
+    assert "The board approved a dividend increase and buybacks." not in _contents(results)
