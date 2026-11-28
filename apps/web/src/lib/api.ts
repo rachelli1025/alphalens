@@ -30,6 +30,7 @@ export type AskResponse = {
   model: string;
   input_tokens: number;
   output_tokens: number;
+  cost_usd: number | null; // list-price estimate; null for models without a known price
   refused: boolean;
 };
 

@@ -105,6 +105,7 @@ def test_ask_returns_parts_and_deduplicated_sources(
     assert [c["source"] for c in body["parts"][1]["citations"]] == [0, 1]
     assert body["parts"][2]["citations"] == [{"source": 1, "cited_text": "Passage 0."}]
     assert (body["input_tokens"], body["output_tokens"]) == (900, 60)
+    assert body["cost_usd"] == pytest.approx((900 * 4 + 60 * 20) / 1_000_000)
     assert seen["tickers"] == ["AAPL"]
     assert seen["k"] == 8
 

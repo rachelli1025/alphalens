@@ -143,7 +143,7 @@ Daily email brief, alerts (sentiment shock or new 8-K), year-over-year 10-K diff
 | Extraction model | `claude-haiku-5-5`, chosen for cost because extraction is the highest-volume LLM workload. The extraction eval must meet the §1.3 target; if it falls short, escalate low-confidence cases to `claude-opus-5-5` |
 | Structured extraction | Structured Outputs (strict JSON schema) |
 | Historical backfill | Message Batches API |
-| Cost | Prompt caching on the system prompt and tool definitions |
+| Cost | Prompt caching on the system prompt and tool definitions; Redis answer cache (§8.1) |
 | Safety | Handle `refusal` stop reasons; server-side fallback enabled |
 | Embeddings | Voyage `voyage-finance-2` (1024-d) |
 | Reranker | Voyage rerank (swappable for `bge-reranker`) |
@@ -305,6 +305,20 @@ GROUP BY id ORDER BY score DESC LIMIT 50;
 
 **Why hybrid:** filings are dense with exact tokens (product names, Item numbers, figures) that pure vector search tends to miss. BM25 covers them.
 
+### 8.1 Answer cache (Redis)
+Repeated questions are common (example prompts, popular tickers, retries), and one cited answer costs about $0.08 on `claude-opus-5-5`. Exact repeats are served from Redis instead of re-running retrieval and generation.
+
+| Aspect | Choice |
+|---|---|
+| Key | `answer:{tickers}:v{prompt_version}:{model}:{effort}:{k}:{sha256(normalized question)}`. `{tickers}` is the sorted ticker list joined by `,`, or `_all` when none is given. Normalization: trim, collapse whitespace, lowercase |
+| Value | The full JSON answer (parts, citations, sources) plus `cached_at` |
+| TTL | 24 hours |
+| Invalidation | Any change to the key's inputs (prompt, model, effort, k) produces a new key. After a successful filing ingest for ticker T, delete keys whose `{tickers}` contains T, and all `answer:_all:*` keys |
+| Not cached | Refusals and errors |
+| Hosting | Local docker-compose Redis; Upstash in stage 1; ElastiCache in stage 2 |
+
+Semantic caching (embedding similarity between questions) is deferred: a near-match can return an answer to a subtly different question, and the retrieval eval should first show where it is safe.
+
 ---
 
 ## 9. Research agent
@@ -452,7 +466,7 @@ GET    /healthz   /readyz   /metrics
 |---|---|
 | Reliability | Idempotent upserts; Airflow retries and backfill; validation gates on assets |
 | Rate limiting | Airflow pools for external APIs; Redis token bucket per user |
-| Cost | Prompt caching; Batch API for backfills; per-user daily token quota; `llm_calls` dashboard |
+| Cost | Prompt caching; Redis answer cache (§8.1); Batch API for backfills; per-user daily token quota; `llm_calls` dashboard |
 | Security | SQL guard; JWT verification; per-user row scoping; secrets in a manager; CORS allow-list |
 | Prompt injection | Retrieved and ingested text is treated as data; strict output schemas |
 | Reproducibility | `model` and `prompt_version` stored with every extracted event |
@@ -519,6 +533,7 @@ Defaults are in bold and will be used unless changed.
 | D4 | News sources | Finnhub · Polygon/Massive · Reddit | **Finnhub + 8-K; Reddit in v2** |
 | D5 | Auth | Clerk · NextAuth | **Clerk** |
 | D6 | Embeddings | Voyage (paid) · bge (local, free) | **Voyage `voyage-finance-2`** |
+| D7 | Answer model for `/api/ask` | Opus 5.5 ($4 / $20 per MTok, about $0.08 per answer) · Haiku 5.5 ($0.10 / $0.50, about $0.002) | **Decided for now: Haiku 5.5** (cost during development). Configurable via `ANSWER_MODEL` and `ANSWER_EFFORT`. Re-decide with the §13 answer eval: keep Haiku if it meets the faithfulness target, otherwise move to Sonnet 5.5 or Opus 5.5. The W3 agent stays on Opus 5.5 |
 
 ---
 

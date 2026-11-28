@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from alphalens_core.answer import answer_question, build_documents, parse_content
 from alphalens_core.retrieval import RetrievedChunk
 
@@ -100,6 +102,23 @@ def test_answer_question_sends_documents_then_question() -> None:
     assert answer.parts[0].citations[0].chunk.chunk_id == 100
     assert (answer.input_tokens, answer.output_tokens) == (1200, 80)
     assert not answer.refused
+
+
+def test_haiku_gets_no_fallbacks_and_custom_effort() -> None:
+    client = FakeClient([_text("Answer.")])
+    answer = answer_question(client, "claude-haiku-5-5", "q", CHUNKS, effort="low")  # type: ignore[arg-type]
+    call = client.calls[0]
+    assert "fallbacks" not in call
+    assert "betas" not in call
+    assert call["output_config"] == {"effort": "low"}
+    assert answer.text == "Answer."
+
+
+def test_cost_is_computed_from_reported_model() -> None:
+    client = FakeClient([_text("Answer.")])
+    answer = answer_question(client, "claude-opus-5-5", "q", CHUNKS)  # type: ignore[arg-type]
+    # FakeClient reports claude-opus-5-5 with 1200 in / 80 out at $4 / $20 per 1M tokens.
+    assert answer.cost_usd == pytest.approx((1200 * 4 + 80 * 20) / 1_000_000)
 
 
 def test_no_chunks_means_no_api_call() -> None:

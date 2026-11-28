@@ -111,7 +111,9 @@ export default function ResearchPage() {
             <AnswerView parts={result.parts} selected={selected} onSelect={setSelected} />
             <p className="mt-6 text-xs text-neutral-400">
               {result.model} · {result.input_tokens.toLocaleString()} in /{" "}
-              {result.output_tokens.toLocaleString()} out tokens · {result.sources.length} sources
+              {result.output_tokens.toLocaleString()} out tokens ·{" "}
+              {result.cost_usd !== null ? `$${result.cost_usd.toFixed(4)}` : "cost unknown"} ·{" "}
+              {result.sources.length} sources
             </p>
           </section>
           <aside className="h-fit rounded-lg border border-neutral-200 p-4 lg:sticky lg:top-6 dark:border-neutral-800">

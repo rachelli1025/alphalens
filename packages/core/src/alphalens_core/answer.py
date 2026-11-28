@@ -11,6 +11,7 @@ from typing import Any
 
 import anthropic
 
+from alphalens_core.pricing import FALLBACK_MODELS, cost_usd
 from alphalens_core.retrieval import RetrievedChunk
 
 SYSTEM_PROMPT = """\
@@ -47,6 +48,10 @@ class Answer:
     def text(self) -> str:
         return "".join(p.text for p in self.parts)
 
+    @property
+    def cost_usd(self) -> float | None:
+        return cost_usd(self.model, self.input_tokens, self.output_tokens)
+
 
 def build_documents(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
     """One document block per chunk; the order defines citation document_index."""
@@ -82,6 +87,8 @@ def answer_question(
     model: str,
     question: str,
     chunks: list[RetrievedChunk],
+    *,
+    effort: str = "medium",
 ) -> Answer:
     if not chunks:
         return Answer(
@@ -91,15 +98,18 @@ def answer_question(
             output_tokens=0,
         )
 
+    extra: dict[str, Any] = {}
+    if model in FALLBACK_MODELS:
+        # If a safety classifier declines, the API retries on a fallback model in
+        # the same call instead of returning an empty refusal.
+        extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+
     response = client.beta.messages.create(
         model=model,
         max_tokens=16000,
         system=SYSTEM_PROMPT,
-        output_config={"effort": "medium"},
-        # If a safety classifier declines, the API retries on a fallback model in
-        # the same call instead of returning an empty refusal.
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
+        output_config={"effort": effort},
+        **extra,
         messages=[
             {
                 "role": "user",
