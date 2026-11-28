@@ -3,6 +3,7 @@
 uv run alphalens ingest AAPL            # latest 10-K
 uv run alphalens ingest AAPL --force    # rebuild sections and chunks
 uv run alphalens ask "What are Apple's main supply chain risks?" --ticker AAPL
+uv run alphalens ingest-financials AAPL MSFT    # XBRL facts -> financial_facts / v_financials
 uv run alphalens eval-retrieval                 # Recall@8 / MRR for hybrid, vector, keyword
 uv run alphalens eval-retrieval --check-labels  # verify golden-set phrases exist (no API calls)
 """
@@ -44,6 +45,17 @@ def _ingest(args: argparse.Namespace) -> int:
                     f"{result.sections} sections, {result.chunks} chunks"
                 )
         print(f"Voyage tokens used: {embedder.total_tokens}")
+    return 0
+
+
+def _ingest_financials(args: argparse.Namespace) -> int:
+    from alphalens_core.ingest.financials import ingest_financials
+
+    settings = get_settings()
+    with EdgarClient(settings.sec_user_agent) as edgar, get_sync_sessionmaker()() as session:
+        for ticker in args.tickers:
+            r = ingest_financials(session, edgar, ticker)
+            print(f"{r.ticker}: {r.facts} facts ({r.labelled} with fiscal year/period)")
     return 0
 
 
@@ -217,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--form", default="10-K")
     ingest.add_argument("--force", action="store_true", help="rebuild even if already embedded")
     ingest.set_defaults(func=_ingest)
+
+    fin = sub.add_parser("ingest-financials", help="load XBRL financial facts for tickers")
+    fin.add_argument("tickers", nargs="+")
+    fin.set_defaults(func=_ingest_financials)
 
     ask = sub.add_parser("ask", help="answer a question from ingested filings, with citations")
     ask.add_argument("question")

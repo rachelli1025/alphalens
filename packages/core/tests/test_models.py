@@ -5,7 +5,9 @@ from alphalens_core.db import Base, Chunk
 
 
 def test_expected_tables_registered() -> None:
-    assert {"companies", "filings", "filing_sections", "chunks"} <= set(Base.metadata.tables)
+    assert {"companies", "filings", "filing_sections", "chunks", "financial_facts"} <= set(
+        Base.metadata.tables
+    )
 
 
 def test_chunks_ddl_has_vector_and_generated_tsvector() -> None:

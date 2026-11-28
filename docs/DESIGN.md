@@ -233,7 +233,13 @@ Daily email brief, alerts (sentiment shock or new 8-K), year-over-year 10-K diff
 5. Natural key: `(accession_no, item_code, chunk_idx)`.
 
 ### 7.2 XBRL to financials
-Map about 30 core concepts (Revenue, NetIncome, EPS diluted, GrossProfit, OperatingCashFlow, …) into the long table `financial_facts`. A wide view, `v_financials_quarterly`, is exposed to text-to-SQL.
+Map 25 core metrics (revenue, net income, EPS diluted, gross profit, operating cash flow, balance-sheet totals, …) from SEC `companyfacts` into the long table `financial_facts` (`alphalens_core.xbrl.METRICS`). A wide view, `v_financials` (one row per company and fiscal period: FY, Q1, Q2, Q3), is exposed to text-to-SQL.
+
+Rules learned from the data:
+- Each metric lists candidate us-gaap concepts in priority order; per period and filing, the first one that filing reports wins (companies switch concepts, e.g. Apple's revenue tag changed in 2018).
+- A fact's `fy`/`fp` describe the filing that reported it, not its own period (FY2024 revenue reappears in the FY2026 10-K tagged fy=2026). A period is labelled from the filing in which it is the current period. Six- and nine-month year-to-date amounts stay unlabelled.
+- Every (period, filing) is stored; the view takes the latest filed, so restatements win.
+- Known gaps: Q4 is not reported separately and is not derived yet; banks have no gross profit or inventory; JPM's quarterly revenue uses a concept outside the list.
 
 ### 7.3 News to events
 ```
@@ -367,10 +373,11 @@ chunks(id, section_id, company_id, chunk_idx, content, context_header,
        form_type, fiscal_year, filed_at)  -- denormalized for filtering
 
 -- financials
-financial_facts(id, company_id, concept, value, unit, period_start, period_end,
+financial_facts(id, company_id, concept, source_tag, value, unit, period_start, period_end,
                 fiscal_year, fiscal_period, form_type, filed_at, accession_no,
-                UNIQUE(company_id, concept, period_end, fiscal_period, accession_no))
-VIEW v_financials_quarterly
+                UNIQUE NULLS NOT DISTINCT(company_id, concept, period_start, period_end, accession_no))
+                -- period_start is NULL for balance-sheet (point-in-time) values
+VIEW v_financials  -- one row per company and fiscal period (FY, Q1-Q3); latest filed value wins
 
 -- prices
 prices_daily(company_id, date, open, high, low, close, adj_close, volume,
