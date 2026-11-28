@@ -59,6 +59,7 @@ class AskResponse(BaseModel):
     model: str
     input_tokens: int
     output_tokens: int
+    cost_usd: float | None  # list-price estimate; None for models missing from the price table
     refused: bool
 
 
@@ -126,6 +127,7 @@ def to_response(answer: Answer) -> AskResponse:
         model=answer.model,
         input_tokens=answer.input_tokens,
         output_tokens=answer.output_tokens,
+        cost_usd=answer.cost_usd,
         refused=answer.refused,
     )
 
@@ -144,7 +146,10 @@ def ask(
         raise HTTPException(status_code=502, detail=f"embedding service error: {exc}") from exc
 
     try:
-        answer = answer_question(claude, get_settings().agent_model, req.question, chunks)
+        settings = get_settings()
+        answer = answer_question(
+            claude, settings.answer_model, req.question, chunks, effort=settings.answer_effort
+        )
     except anthropic.APIStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Claude API error: {exc.message}") from exc
     except anthropic.APIConnectionError as exc:

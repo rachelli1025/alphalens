@@ -62,7 +62,10 @@ def _print_answer(answer: Answer) -> None:
         for chunk_id, n in sources.items():
             chunk = by_id[chunk_id]
             print(f"  [{n}] {chunk.context_header}  {chunk.url}")
-    print(f"\n({answer.model}, {answer.input_tokens} in / {answer.output_tokens} out tokens)")
+    cost = f"${answer.cost_usd:.4f}" if answer.cost_usd is not None else "cost unknown"
+    print(
+        f"\n({answer.model}, {answer.input_tokens} in / {answer.output_tokens} out tokens, {cost})"
+    )
 
 
 def _ask(args: argparse.Namespace) -> int:
@@ -82,7 +85,9 @@ def _ask(args: argparse.Namespace) -> int:
         print()
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
-    _print_answer(answer_question(client, settings.agent_model, args.question, chunks))
+    model = args.model or settings.answer_model
+    effort = args.effort or settings.answer_effort
+    _print_answer(answer_question(client, model, args.question, chunks, effort=effort))
     return 0
 
 
@@ -101,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--ticker", action="append", help="restrict to a company (repeatable)")
     ask.add_argument("-k", type=int, default=8, help="number of passages given to Claude")
     ask.add_argument("--show-chunks", action="store_true", help="print the retrieved passages")
+    ask.add_argument("--model", help="override ANSWER_MODEL, e.g. claude-opus-5-5")
+    ask.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     ask.set_defaults(func=_ask)
 
     parser.add_argument("-v", "--verbose", action="store_true")

@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     sec_user_agent: str = ""
 
     # Models (see docs/DESIGN.md §4.3)
-    agent_model: str = "claude-opus-5-5"
+    agent_model: str = "claude-opus-5-5"  # W3 research agent
+    # /api/ask and `alphalens ask`. Haiku until the answer eval exists (DESIGN.md D7).
+    answer_model: str = "claude-haiku-5-5"
+    answer_effort: str = "medium"  # low | medium | high | xhigh | max
     extraction_model: str = "claude-haiku-5-5"
     embedding_model: str = "voyage-finance-2"
     embedding_dim: int = 1024
