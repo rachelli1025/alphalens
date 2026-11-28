@@ -9,10 +9,14 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
-from alphalens_core.retrieval import RetrievedChunk, SearchMode
+from alphalens_core.retrieval import RetrievedChunk
+
+# hybrid / vector / keyword are single-stage SQL searches; rerank = hybrid + reranker.
+EvalMode = Literal["hybrid", "vector", "keyword", "rerank"]
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ class CaseResult:
 
 @dataclass(frozen=True)
 class ModeReport:
-    mode: SearchMode
+    mode: EvalMode
     k: int
     results: list[CaseResult]
 
@@ -54,7 +58,7 @@ class ModeReport:
 
 
 # search(question, tickers, k, mode) -> ranked chunks; injected so tests need no database.
-Search = Callable[[str, list[str] | None, int, SearchMode], list[RetrievedChunk]]
+Search = Callable[[str, list[str] | None, int, EvalMode], list[RetrievedChunk]]
 
 
 def normalize(text: str) -> str:
@@ -97,7 +101,7 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 
 def evaluate(
-    cases: Sequence[EvalCase], search: Search, *, mode: SearchMode, k: int = 8
+    cases: Sequence[EvalCase], search: Search, *, mode: EvalMode, k: int = 8
 ) -> ModeReport:
     results = []
     for case in cases:

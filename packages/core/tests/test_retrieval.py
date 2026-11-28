@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from alphalens_core.db.models import EMBEDDING_DIM, Chunk, Company, Filing, FilingSection
 from alphalens_core.embeddings import InputType
-from alphalens_core.retrieval import hybrid_search
+from alphalens_core.retrieval import hybrid_search, rerank_search
 
 CIKS = {"TSTA": "0009999998", "TSTB": "0009999997"}
 
@@ -165,3 +165,27 @@ def test_keyword_mode_returns_only_keyword_matches(session: Session) -> None:
     assert results
     assert all(r.kw_rank is not None and r.vec_rank is None for r in results)
     assert "The board approved a dividend increase and buybacks." not in _contents(results)
+
+
+class ReverseReranker:
+    """Ranks candidates in reverse order, so the test can see the reranker took effect."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def rerank(self, query: str, documents: list[str], top_k: int) -> list[tuple[int, float]]:
+        self.seen = documents
+        order = list(reversed(range(len(documents))))[:top_k]
+        return [(i, 1.0 - n / 10) for n, i in enumerate(order)]
+
+
+def test_rerank_search_reorders_hybrid_candidates(session: Session) -> None:
+    hybrid = hybrid_search(session, QueryEmbedder(), "supply chain risk", tickers=["TSTA"], k=50)
+    reranker = ReverseReranker()
+    results = rerank_search(
+        session, QueryEmbedder(), reranker, "supply chain risk", tickers=["TSTA"], k=2
+    )
+    assert [r.chunk_id for r in results] == [c.chunk_id for c in reversed(hybrid)][:2]
+    assert results[0].rerank_score == 1.0
+    # The reranker reads the same header + content text that was embedded.
+    assert reranker.seen[0].startswith("[TSTA | 10-K | FY2025 | Item 7 MD&A]\n\n")

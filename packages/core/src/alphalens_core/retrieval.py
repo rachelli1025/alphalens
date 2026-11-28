@@ -9,7 +9,7 @@ RRF only uses ranks, so the two very different score scales never need to be
 normalized against each other.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from pgvector.sqlalchemy import Vector
@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from alphalens_core.db.models import EMBEDDING_DIM, Company
 from alphalens_core.embeddings import Embedder
+from alphalens_core.reranking import Reranker
 
 RRF_K = 60  # standard constant from the RRF paper; damps the weight of top ranks
 CANDIDATES = 50  # how many results each search contributes before fusion
@@ -92,6 +93,7 @@ class RetrievedChunk:
     score: float
     vec_rank: int | None  # rank in the vector list, None if it only came from keywords
     kw_rank: int | None  # rank in the keyword list, None if it only came from vectors
+    rerank_score: float | None = None  # set by rerank_search
 
 
 def hybrid_search(
@@ -144,3 +146,23 @@ def hybrid_search(
         )
         for row in rows
     ]
+
+
+def rerank_search(
+    session: Session,
+    embedder: Embedder,
+    reranker: Reranker,
+    question: str,
+    *,
+    tickers: list[str] | None = None,
+    k: int = 8,
+    candidates: int = CANDIDATES,
+) -> list[RetrievedChunk]:
+    """Two stages: hybrid search recalls `candidates` chunks, the reranker keeps the best k.
+
+    The reranker sees the same header + content text that was embedded, so it knows
+    which company, filing and section each passage comes from.
+    """
+    pool = hybrid_search(session, embedder, question, tickers=tickers, k=candidates)
+    ranked = reranker.rerank(question, [f"{c.context_header}\n\n{c.content}" for c in pool], k)
+    return [replace(pool[i], rerank_score=score) for i, score in ranked]

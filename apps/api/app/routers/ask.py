@@ -20,7 +20,8 @@ from alphalens_core.config import Settings, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import EmbeddingError, VoyageEmbedder
 from alphalens_core.query_understanding import TickerResolution, list_companies, resolve_tickers
-from alphalens_core.retrieval import RetrievedChunk, hybrid_search
+from alphalens_core.reranking import RerankError, VoyageReranker
+from alphalens_core.retrieval import RetrievedChunk, hybrid_search, rerank_search
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,12 @@ def get_claude() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=get_settings().anthropic_api_key or None)
 
 
+@lru_cache
+def get_reranker() -> VoyageReranker:
+    s = get_settings()
+    return VoyageReranker(s.voyage_api_key, s.rerank_model)
+
+
 def get_session() -> Iterator[Session]:
     with get_sync_sessionmaker()() as session:
         yield session
@@ -111,8 +118,11 @@ def get_session() -> Iterator[Session]:
 def get_retriever(
     session: Annotated[Session, Depends(get_session)],
     embedder: Annotated[VoyageEmbedder, Depends(get_embedder)],
+    reranker: Annotated[VoyageReranker, Depends(get_reranker)],
 ) -> Retriever:
     def retrieve(question: str, tickers: list[str] | None, k: int) -> list[RetrievedChunk]:
+        if get_settings().rerank_enabled:
+            return rerank_search(session, embedder, reranker, question, tickers=tickers, k=k)
         return hybrid_search(session, embedder, question, tickers=tickers, k=k)
 
     return retrieve
@@ -193,8 +203,8 @@ def ask(
     # raw provider errors include request IDs and account details.
     try:
         chunks = retrieve(req.question, resolution.tickers or None, req.k)
-    except EmbeddingError as exc:
-        log.exception("embedding failed")
+    except (EmbeddingError, RerankError) as exc:
+        log.exception("retrieval failed")
         raise HTTPException(status_code=502, detail="search is temporarily unavailable") from exc
 
     try:

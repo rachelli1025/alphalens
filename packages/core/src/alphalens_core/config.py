@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     answer_effort: str = "medium"  # low | medium | high | xhigh | max
     # Query understanding: which companies a question is about (DESIGN.md §8, first step).
     query_model: str = "claude-haiku-5-5"
+    # Second retrieval stage: rerank hybrid-search candidates (DESIGN.md §8).
+    rerank_model: str = "rerank-2.5"
+    # Retrieval eval v2 (35 cases): hybrid Recall@8 0.89 / MRR 0.66 -> rerank 1.00 / 0.90.
+    rerank_enabled: bool = True
     extraction_model: str = "claude-haiku-5-5"
     embedding_model: str = "voyage-finance-2"
     embedding_dim: int = 1024
