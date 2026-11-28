@@ -6,6 +6,7 @@ uv run alphalens ask "What are Apple's main supply chain risks?" --ticker AAPL
 uv run alphalens ingest-financials AAPL MSFT    # XBRL facts -> financial_facts / v_financials
 uv run alphalens eval-retrieval                 # Recall@8 / MRR for hybrid, vector, keyword
 uv run alphalens eval-retrieval --check-labels  # verify golden-set phrases exist (no API calls)
+uv run alphalens agent "Rank all companies by fiscal 2025 operating margin"
 """
 
 import argparse
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import anthropic
 
-from alphalens_core.answer import Answer, answer_question
+from alphalens_core.answer import Answer, AnswerPart, answer_question
 from alphalens_core.config import REPO_ROOT, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import VoyageEmbedder
@@ -60,7 +61,7 @@ def _ingest_financials(args: argparse.Namespace) -> int:
 
 
 def _agent(args: argparse.Namespace) -> int:
-    from alphalens_core.agent.loop import run_agent
+    from alphalens_core.agent.loop import Done, ToolEnd, ToolStart, stream_agent
     from alphalens_core.agent.tools import ToolContext
 
     settings = get_settings()
@@ -71,7 +72,7 @@ def _agent(args: argparse.Namespace) -> int:
         get_sync_sessionmaker()() as session,
     ):
         ctx = ToolContext(session=session, embedder=embedder, reranker=reranker)
-        result = run_agent(
+        events = stream_agent(
             client,
             args.model or settings.agent_model,
             args.question,
@@ -79,34 +80,35 @@ def _agent(args: argparse.Namespace) -> int:
             list_companies(session),
             effort=args.effort or settings.agent_effort,
         )
+        n = 0
+        for event in events:  # tool status prints as it happens
+            if isinstance(event, ToolStart):
+                n += 1
+                print(f"  {n}. {event.name} ...", flush=True)
+            elif isinstance(event, ToolEnd):
+                flag = " (error)" if event.call.is_error else ""
+                print(f"     -> {event.call.summary}{flag}")
+                if event.call.sql:
+                    print(f"     SQL: {event.call.sql}")
+            elif isinstance(event, Done):
+                result = event.result
 
-    print("Tool calls:")
-    for i, call in enumerate(result.tool_calls, 1):
-        flag = " (error)" if call.is_error else ""
-        print(f"  {i}. {call.name}{flag}: {call.summary}")
-    for sql in result.sql_queries:
-        print(f"     SQL: {sql}")
     print()
-    from alphalens_core.answer import Answer
-
-    _print_answer(
-        Answer(
-            parts=result.parts,
-            model=result.model,
-            input_tokens=result.input_tokens + result.cache_write_tokens + result.cache_read_tokens,
-            output_tokens=result.output_tokens,
-        )
+    _print_parts(result.parts)
+    cost = f"${result.cost_usd:.4f}" if result.cost_usd is not None else "cost unknown"
+    print(
+        f"\n({result.model}, {len(result.tool_calls)} tool calls, "
+        f"{result.input_tokens} in + {result.cache_read_tokens} cache read + "
+        f"{result.cache_write_tokens} cache write / {result.output_tokens} out tokens, {cost})"
     )
-    cost = f"${result.cost_usd:.4f}" if result.cost_usd is not None else "unknown"
-    print(f"Agent cost with caching: {cost} (cache read {result.cache_read_tokens} tokens)")
     return 0
 
 
-def _print_answer(answer: Answer) -> None:
+def _print_parts(parts: list[AnswerPart]) -> None:
     """Answer text with [n] markers, then the numbered sources they point to."""
     sources: dict[int, int] = {}  # chunk_id -> source number
     out = []
-    for part in answer.parts:
+    for part in parts:
         out.append(part.text)
         marks = []
         for c in part.citations:
@@ -118,10 +120,14 @@ def _print_answer(answer: Answer) -> None:
 
     if sources:
         print("\nSources:")
-        by_id = {c.chunk.chunk_id: c.chunk for p in answer.parts for c in p.citations}
+        by_id = {c.chunk.chunk_id: c.chunk for p in parts for c in p.citations}
         for chunk_id, n in sources.items():
             chunk = by_id[chunk_id]
             print(f"  [{n}] {chunk.context_header}  {chunk.url}")
+
+
+def _print_answer(answer: Answer) -> None:
+    _print_parts(answer.parts)
     cost = f"${answer.cost_usd:.4f}" if answer.cost_usd is not None else "cost unknown"
     print(
         f"\n({answer.model}, {answer.input_tokens} in / {answer.output_tokens} out tokens, {cost})"

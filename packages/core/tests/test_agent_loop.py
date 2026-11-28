@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from alphalens_core.agent import loop as loop_module
-from alphalens_core.agent.loop import run_agent
+from alphalens_core.agent.loop import Done, TextDelta, ToolEnd, ToolStart, run_agent, stream_agent
 from alphalens_core.agent.tools import ToolContext, ToolOutput, chunk_source
 from alphalens_core.retrieval import RetrievedChunk
 
@@ -46,16 +46,41 @@ def _resp(content: list[Any], stop: str, usage: SimpleNamespace | None = None) -
     )
 
 
+class FakeStream:
+    """Like the SDK's MessageStream: iterates events, then get_final_message()."""
+
+    def __init__(self, response: SimpleNamespace) -> None:
+        self.response = response
+
+    def __enter__(self) -> "FakeStream":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def __iter__(self) -> Any:
+        for block in self.response.content:
+            if getattr(block, "type", None) == "text":
+                # The SDK emits several deltas per block; two halves are enough here.
+                half = len(block.text) // 2
+                for piece in (block.text[:half], block.text[half:]):
+                    if piece:
+                        yield SimpleNamespace(type="text", text=piece)
+
+    def get_final_message(self) -> SimpleNamespace:
+        return self.response
+
+
 class ScriptedClaude:
     def __init__(self, responses: list[SimpleNamespace]) -> None:
         self.responses = list(responses)
         self.calls: list[dict[str, Any]] = []
-        self.messages = SimpleNamespace(create=self._create)
+        self.messages = SimpleNamespace(stream=self._stream)
 
-    def _create(self, **kwargs: Any) -> SimpleNamespace:
+    def _stream(self, **kwargs: Any) -> FakeStream:
         # Snapshot: the loop keeps appending to the same list.
         self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
-        return self.responses.pop(0)
+        return FakeStream(self.responses.pop(0))
 
 
 @pytest.fixture
@@ -70,7 +95,7 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> ToolContext:
             )
         if tool_input.get("sql") == "bad":
             return ToolOutput("Query rejected: only SELECT", is_error=True, summary="SQL rejected")
-        return ToolOutput('{"rows": [[0.36]]}', summary="SQL: 1 rows")
+        return ToolOutput('{"rows": [[0.36]]}', summary="SQL: 1 rows", sql="SELECT 1 LIMIT 500")
 
     monkeypatch.setattr(loop_module, "run_tool", fake_run_tool)
     return context
@@ -152,3 +177,36 @@ def test_refusal_without_text(ctx: ToolContext) -> None:
     claude = ScriptedClaude([_resp([], "refusal")])
     result = run_agent(claude, "m", "q", ctx, {})  # type: ignore[arg-type]
     assert "declined" in result.text
+
+
+def test_stream_yields_events_in_order(ctx: ToolContext) -> None:
+    claude = ScriptedClaude(
+        [
+            _resp(
+                [
+                    SimpleNamespace(type="text", text="Checking.", citations=None),
+                    _tool_use("t1", "query_financials", {"sql": "SELECT 1"}),
+                ],
+                "tool_use",
+            ),
+            _resp([SimpleNamespace(type="text", text="Answer", citations=None)], "end_turn"),
+        ]
+    )
+    events = list(stream_agent(claude, "m", "q", ctx, {}))  # type: ignore[arg-type]
+
+    kinds = [type(e).__name__ for e in events]
+    assert kinds == [
+        "TextDelta",
+        "TextDelta",
+        "ToolStart",
+        "ToolEnd",
+        "TextDelta",
+        "TextDelta",
+        "Done",
+    ]
+    start, end, done = events[2], events[3], events[-1]
+    assert isinstance(start, ToolStart) and start.input == {"sql": "SELECT 1"}
+    assert isinstance(end, ToolEnd) and end.id == "t1" and end.call.sql == "SELECT 1 LIMIT 500"
+    assert "".join(e.text for e in events[4:6] if isinstance(e, TextDelta)) == "Answer"
+    # Preamble text before the tool call is not part of the final answer.
+    assert isinstance(done, Done) and done.result.text == "Answer"

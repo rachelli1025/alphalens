@@ -101,6 +101,7 @@ class ToolOutput:
     content: list[dict[str, Any]] | str
     is_error: bool = False
     summary: str = ""  # one line for logs and the UI's tool status
+    sql: str | None = None  # query_financials: the statement actually executed
 
 
 def chunk_source(chunk: RetrievedChunk) -> str:
@@ -149,7 +150,11 @@ def _query_financials(ctx: ToolContext, sql: str) -> ToolOutput:
         "row_count": len(result.rows),
         "note": "rows truncated" if len(result.rows) > len(shown) or result.truncated else "",
     }
-    return ToolOutput(json.dumps(payload, default=str), summary=f"SQL: {len(result.rows)} rows")
+    return ToolOutput(
+        json.dumps(payload, default=str),
+        summary=f"SQL: {len(result.rows)} rows",
+        sql=result.sql,
+    )
 
 
 def run_tool(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> ToolOutput:

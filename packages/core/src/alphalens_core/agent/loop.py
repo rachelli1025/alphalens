@@ -4,6 +4,11 @@
         run every requested tool, send all results back in one user message
     the last response is the answer
 
+stream_agent() yields events as they happen (text deltas, tool start/end, done) so the
+API can forward them over SSE; run_agent() consumes them and returns the result.
+Text streamed before a ToolStart is the model's preamble for that turn, not the answer:
+the answer is the text after the last tool call, also given in full by Done.
+
 Rules the API depends on:
 - The assistant turn is appended exactly as returned (including thinking blocks).
 - All tool results of one turn go back together, in one user message.
@@ -12,6 +17,7 @@ Rules the API depends on:
 """
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +61,7 @@ class ToolCall:
     input: dict[str, Any]
     summary: str
     is_error: bool
+    sql: str | None = None  # the statement actually executed (query_financials only)
 
 
 @dataclass
@@ -102,7 +109,33 @@ def _parse_answer(content: list[Any], ctx: ToolContext) -> list[AnswerPart]:
     return parts
 
 
-def run_agent(
+@dataclass(frozen=True)
+class TextDelta:
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolStart:
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolEnd:
+    id: str
+    call: ToolCall
+
+
+@dataclass(frozen=True)
+class Done:
+    result: AgentResult
+
+
+AgentEvent = TextDelta | ToolStart | ToolEnd | Done
+
+
+def stream_agent(
     client: anthropic.Anthropic,
     model: str,
     question: str,
@@ -111,14 +144,14 @@ def run_agent(
     *,
     effort: str = "medium",
     max_tool_calls: int = MAX_TOOL_CALLS,
-) -> AgentResult:
+) -> Iterator[AgentEvent]:
     system = SYSTEM_PROMPT.format(companies="\n".join(f"{t}: {n}" for t, n in companies.items()))
     messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
     result = AgentResult(parts=[], tool_calls=[], sql_queries=ctx.sql_queries, model=model)
     tools_allowed = True
 
     while True:
-        response = client.messages.create(
+        with client.messages.stream(
             model=model,
             max_tokens=16000,
             system=system,
@@ -128,7 +161,13 @@ def run_agent(
             # Caches the growing prefix (system, tools, earlier turns) between iterations.
             cache_control={"type": "ephemeral"},
             messages=messages,
-        )
+        ) as stream:
+            for event in stream:
+                if event.type == "text":
+                    yield TextDelta(event.text)
+            # Any: blocks are checked by .type below, like the rest of this module.
+            response: Any = stream.get_final_message()
+
         usage = response.usage
         result.input_tokens += usage.input_tokens
         result.output_tokens += usage.output_tokens
@@ -141,22 +180,32 @@ def run_agent(
             result.parts = _parse_answer(response.content, ctx)
             if not result.parts and response.stop_reason == "refusal":
                 result.parts = [AnswerPart("The model declined to answer this question.")]
-            return result
+            yield Done(result)
+            return
 
         messages.append({"role": "assistant", "content": response.content})
         tool_results = []
         for block in response.content:
             if getattr(block, "type", None) != "tool_use":
                 continue
+            yield ToolStart(block.id, block.name, dict(block.input))
+            sql = None
             if len(result.tool_calls) >= max_tool_calls:
                 output_content: Any = "Tool call limit reached. Answer with what you have."
                 is_error, summary = True, "skipped: tool call limit"
                 result.hit_tool_limit = True
             else:
                 out = run_tool(ctx, block.name, block.input)
-                output_content, is_error, summary = out.content, out.is_error, out.summary
+                output_content, is_error, summary, sql = (
+                    out.content,
+                    out.is_error,
+                    out.summary,
+                    out.sql,
+                )
             log.info("tool %s %s -> %s", block.name, block.input, summary)
-            result.tool_calls.append(ToolCall(block.name, dict(block.input), summary, is_error))
+            call = ToolCall(block.name, dict(block.input), summary, is_error, sql)
+            result.tool_calls.append(call)
+            yield ToolEnd(block.id, call)
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -168,3 +217,22 @@ def run_agent(
         messages.append({"role": "user", "content": tool_results})
         if result.hit_tool_limit:
             tools_allowed = False
+
+
+def run_agent(
+    client: anthropic.Anthropic,
+    model: str,
+    question: str,
+    ctx: ToolContext,
+    companies: dict[str, str],
+    *,
+    effort: str = "medium",
+    max_tool_calls: int = MAX_TOOL_CALLS,
+) -> AgentResult:
+    """Run to completion and return the result (for the CLI and evals)."""
+    for event in stream_agent(
+        client, model, question, ctx, companies, effort=effort, max_tool_calls=max_tool_calls
+    ):
+        if isinstance(event, Done):
+            return event.result
+    raise RuntimeError("agent stream ended without a result")  # unreachable

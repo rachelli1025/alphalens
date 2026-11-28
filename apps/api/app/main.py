@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from alphalens_core.config import get_settings
-from app.routers import ask, health
+from app.routers import agent, ask, health
 
 app = FastAPI(title="AlphaLens API", version="0.1.0")
 
@@ -15,3 +15,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(ask.router)
+app.include_router(agent.router)

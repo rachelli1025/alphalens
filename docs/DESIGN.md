@@ -439,6 +439,10 @@ GET    /api/admin/evals   /api/admin/costs   /api/admin/pipelines
 GET    /healthz   /readyz   /metrics
 ```
 
+Built so far (W3): `POST /api/agent {question}` streams one stateless agent run as SSE events
+`tool_start`, `tool_end`, `text`, `done` (answer, citations, tool calls, cost) and `error`.
+The conversation endpoints add history on top of the same event stream.
+
 ---
 
 ## 12. Frontend
