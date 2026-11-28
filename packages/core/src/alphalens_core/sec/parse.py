@@ -156,7 +156,11 @@ def split_10k_items(text: str) -> list[Section]:
 
     Every chain of increasing Item headings is a candidate; the table of contents
     yields a chain of tiny sections, the real body yields long ones. We keep the
-    chain with the most substantial sections (ties: more sections, then later start).
+    chain with the most substantial sections (ties: more sections, then the EARLIEST start).
+
+    Earliest start matters when an Item heading repeats as a running page header
+    ("Item 1" atop every page): every repeat starts an equally good chain, and only
+    the first one keeps the whole section instead of its last page.
     """
     lines = text.split("\n")
     headings = _find_headings(lines)
@@ -167,7 +171,7 @@ def split_10k_items(text: str) -> list[Section]:
     for start in range(len(headings)):
         sections = _sections_from_chain(lines, _chain_from(start, headings))
         substantial = sum(len(s.text) >= MIN_SECTION_CHARS for s in sections)
-        score = (substantial, len(sections), start)
+        score = (substantial, len(sections), -start)
         if best is None or score > best[0]:
             best = (score, sections)
     assert best is not None
