@@ -1,0 +1,341 @@
+# Retrieval golden set over the latest 10-K of each ingested company.
+# v1: 15 Apple cases. v2: +20 cases across 10 more companies, more exact-term and
+# table questions, and cross-company questions.
+#
+# A case passes at k if any of the top-k chunks matches ANY `relevant` label:
+#   chunk.item_code == item  AND  `contains` appears in the chunk text
+# (comparison ignores case, whitespace and curly vs straight quotes).
+#
+# Label with a phrase that answers the question and is specific enough that it does
+# not appear in unrelated chunks. Check a phrase before adding it:
+#   uv run alphalens eval-retrieval --check-labels
+#
+# tags: paraphrase = question wording differs from the filing (tests vector search)
+#       exact      = names a specific term (tests keyword search)
+#       table      = answer is a number in a table (flattened as "a | b | c" in W1)
+#       cross      = asks about several companies; recall counts a hit on ANY of them
+#
+# Avoid labelling JPM/CVX MD&A or financial statements for now: those filings put that
+# content under later Items, so labels would change once section labelling is fixed.
+
+cases:
+  - id: supply-final-assembly
+    question: Where does Apple do the final assembly of its hardware?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1A"
+        contains: final assembly of substantially all
+
+  - id: supply-single-source
+    question: Does Apple depend on any single suppliers for its components?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1A"
+        contains: certain components from single or limited sources
+
+  - id: legal-dma
+    question: What is the EU Digital Markets Act investigation about?
+    tickers: [AAPL]
+    tags: [exact]
+    relevant:
+      - item: "3"
+        contains: formal noncompliance investigation
+
+  - id: cyber-owner
+    question: Who is responsible for managing cybersecurity risk at Apple?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1C"
+        contains: Head of Corporate Information Security
+
+  - id: fiscal-year
+    question: When does Apple's fiscal year end?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: 52- or 53-week period
+      - item: "8"
+        contains: 52- or 53-week period
+
+  - id: services-subscriptions
+    question: What subscription services does Apple offer?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: Apple Arcade
+
+  - id: greater-china-sales
+    question: How did Apple's sales in Greater China change in 2026?
+    tickers: [AAPL]
+    tags: [exact]
+    relevant:
+      - item: "7"
+        contains: Greater China net sales
+
+  - id: headquarters
+    question: Where is Apple headquartered?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "2"
+        contains: headquarters is located in Cupertino
+
+  - id: total-net-sales
+    question: What were Apple's total net sales in fiscal 2026?
+    tickers: [AAPL]
+    tags: [table]
+    relevant:
+      - item: "7"
+        contains: "478,834"
+      - item: "8"
+        contains: "478,834"
+
+  - id: buybacks
+    question: How much stock did Apple buy back in 2026?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "7"
+        contains: repurchased $85.8 billion
+
+  - id: employees
+    question: How many people does Apple employ?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: 167,000 full-time equivalent employees
+
+  - id: rd-spend
+    question: How much did Apple spend on research and development in 2026?
+    tickers: [AAPL]
+    tags: [table]
+    relevant:
+      - item: "7"
+        contains: "45,765"
+      - item: "8"
+        contains: "45,765"
+
+  - id: ai-competition-risk
+    question: Could Apple fall behind competitors in AI?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1A"
+        contains: Failure to successfully develop, deploy or differentiate artificial intelligence
+
+  - id: interest-rate-exposure
+    question: How do changes in interest rates affect Apple's investments and debt?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "7A"
+        contains: Increases in interest rates will negatively affect the fair value
+
+  - id: competition-pricing
+    question: How do Apple's competitors try to win customers?
+    tickers: [AAPL]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: compete primarily through aggressive pricing and very low cost structures
+
+  # ===================== v2: other companies =====================
+
+  - id: msft-azure-growth
+    question: How fast is Microsoft's Azure cloud business growing?
+    tickers: [MSFT]
+    tags: [exact]
+    relevant:
+      - item: "7"
+        contains: driven by Azure and other cloud services
+
+  - id: msft-openai
+    question: What is Microsoft's relationship with OpenAI?
+    tickers: [MSFT]
+    tags: [exact]
+    relevant:
+      - item: "1A"
+        contains: long-term strategic partnership with OpenAI
+      - item: "7"
+        contains: long-term strategic partnership with OpenAI
+      - item: "8"
+        contains: long-term strategic partnership with OpenAI
+
+  - id: nvda-blackwell
+    question: What is NVIDIA's Blackwell architecture?
+    tickers: [NVDA]
+    tags: [exact]
+    relevant:
+      - item: "1"
+        contains: launched the NVIDIA Blackwell architecture
+
+  - id: nvda-china-restrictions
+    question: How do US limits on chip sales to China affect Nvidia?
+    tickers: [NVDA]
+    tags: [paraphrase]
+    # Many NVDA passages answer this; label several (an incomplete label set made this
+    # look like a total miss in the first v2 run although all top 8 were on topic).
+    relevant:
+      - item: "1A"
+        contains: limited by export controls
+      - item: "1A"
+        contains: licensing requirements for exports to China
+      - item: "1A"
+        contains: Reduced demand due to export controls
+      - item: "1"
+        contains: series of shifting and expanding export control restrictions
+
+  - id: nvda-revenue
+    question: What was Nvidia's revenue in fiscal 2026?
+    tickers: [NVDA]
+    tags: [table]
+    relevant:
+      - item: "7"
+        contains: "215,938"
+      - item: "15"
+        contains: "215,938"
+
+  - id: googl-waymo
+    question: How is Alphabet's Waymo business expanding?
+    tickers: [GOOGL]
+    tags: [exact]
+    relevant:
+      - item: "1"
+        contains: Waymo, which is expanding to more cities
+
+  - id: googl-tac
+    question: What does Google expect for its traffic acquisition costs?
+    tickers: [GOOGL]
+    tags: [exact]
+    relevant:
+      - item: "7"
+        contains: We expect traffic acquisition costs
+
+  - id: meta-reality-labs-losses
+    question: Will Meta keep losing money on its VR and AR hardware?
+    tickers: [META]
+    tags: [paraphrase]
+    relevant:
+      - item: "1A"
+        contains: Reality Labs operating losses to remain similar
+
+  - id: meta-user-metrics
+    question: Which user metrics does Meta report?
+    tickers: [META]
+    tags: [paraphrase]
+    relevant:
+      - item: "1A"
+        contains: daily active people (DAP)
+      - item: "7"
+        contains: daily active people (DAP)
+
+  - id: amzn-segments
+    question: How does Amazon organize its business segments?
+    tickers: [AMZN]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: "three segments: North America, International, and Amazon Web Services"
+
+  - id: tsla-models
+    question: Which car models does Tesla currently produce?
+    tickers: [TSLA]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: manufacture five different consumer vehicles
+
+  - id: tsla-regulatory-credits
+    question: Does Tesla make money from selling regulatory credits?
+    tickers: [TSLA]
+    tags: [exact]
+    relevant:
+      - item: "1"
+        contains: sales of automotive regulatory credits
+      - item: "7"
+        contains: regulatory credits
+      - item: "8"
+        contains: regulatory credits
+
+  - id: wmt-walmart-plus
+    question: What benefits does a Walmart+ membership include?
+    tickers: [WMT]
+    tags: [exact]
+    relevant:
+      - item: "1"
+        contains: Walmart+ membership offering provides enhanced omnichannel shopping
+
+  - id: wmt-employees
+    question: How many people work for Walmart?
+    tickers: [WMT]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: million associates around the world
+
+  - id: jpm-capital-rules
+    question: Which capital rules apply to JPMorgan Chase?
+    tickers: [JPM]
+    tags: [exact]
+    relevant:
+      - item: "1"
+        contains: Basel III capital and liquidity framework
+
+  - id: jnj-talc
+    question: How is Johnson & Johnson trying to resolve the talc lawsuits?
+    tickers: [JNJ]
+    tags: [exact]
+    relevant:
+      - item: "8"
+        contains: resolution of the talc claims
+      - item: "1A"
+        contains: talc
+
+  - id: jnj-intra-cellular
+    question: When did J&J acquire Intra-Cellular Therapies?
+    tickers: [JNJ]
+    tags: [exact]
+    relevant:
+      - item: "7"
+        contains: Intra-Cellular Therapies on April 2, 2025
+      - item: "8"
+        contains: Intra-Cellular Therapies
+
+  - id: cvx-production-growth
+    question: Why did Chevron's oil and gas production rise in 2025?
+    tickers: [CVX]
+    tags: [paraphrase]
+    relevant:
+      - item: "1"
+        contains: up approximately 12 percent from 2024
+
+  - id: cross-china-trade
+    question: How do trade restrictions with China affect Apple and Nvidia?
+    tickers: [AAPL, NVDA]
+    tags: [cross]
+    relevant:
+      - item: "1A"
+        contains: Restrictions on international trade, such as tariffs
+      - item: "1A"
+        contains: limited by export controls
+
+  - id: cross-cloud
+    question: How do Microsoft and Alphabet describe their cloud businesses?
+    tickers: [MSFT, GOOGL]
+    tags: [cross]
+    relevant:
+      - item: "7"
+        contains: driven by Azure and other cloud services
+      - item: "1"
+        contains: Google Cloud generates revenues primarily from consumption-based fees
+
+  # ---- Adding cases ----
+  #   1. Find the passage first (Neon SQL editor, or search the 10-K on sec.gov).
+  #   2. Phrase the question the way an analyst would ask it, not by copying the text.
+  #   3. Pick a `contains` phrase of 4-8 words that only appears where the answer is.

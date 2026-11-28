@@ -102,7 +102,7 @@ def _ask(args: argparse.Namespace) -> int:
     return 0
 
 
-DEFAULT_DATASET = REPO_ROOT / "evals" / "datasets" / "retrieval_aapl.yaml"
+DEFAULT_DATASET = REPO_ROOT / "evals" / "datasets" / "retrieval.yaml"
 
 
 def _check_labels(cases: list, session) -> int:  # type: ignore[type-arg, no-untyped-def]

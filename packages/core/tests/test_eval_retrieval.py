@@ -12,7 +12,7 @@ from alphalens_core.evals.retrieval import (
 )
 from alphalens_core.retrieval import RetrievedChunk
 
-REPO_DATASET = Path(__file__).parents[3] / "evals" / "datasets" / "retrieval_aapl.yaml"
+REPO_DATASET = Path(__file__).parents[3] / "evals" / "datasets" / "retrieval.yaml"
 
 
 def _chunk(content: str, item: str = "1A") -> RetrievedChunk:
