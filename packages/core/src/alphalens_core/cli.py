@@ -19,6 +19,7 @@ from alphalens_core.config import REPO_ROOT, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import VoyageEmbedder
 from alphalens_core.ingest import ingest_latest_filing
+from alphalens_core.query_understanding import list_companies, resolve_tickers
 from alphalens_core.retrieval import RetrievedChunk, SearchMode, hybrid_search
 from alphalens_core.sec import EdgarClient
 
@@ -73,11 +74,19 @@ def _print_answer(answer: Answer) -> None:
 
 def _ask(args: argparse.Namespace) -> int:
     settings = get_settings()
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
     with (
         VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder,
         get_sync_sessionmaker()() as session,
     ):
-        chunks = hybrid_search(session, embedder, args.question, tickers=args.ticker, k=args.k)
+        tickers = args.ticker
+        if not tickers:
+            resolution = resolve_tickers(
+                client, settings.query_model, args.question, list_companies(session)
+            )
+            tickers = resolution.tickers
+            print(f"Companies detected: {', '.join(tickers) or 'none (searching all)'}\n")
+        chunks = hybrid_search(session, embedder, args.question, tickers=tickers or None, k=args.k)
 
     if args.show_chunks:
         for i, c in enumerate(chunks, 1):
@@ -87,7 +96,6 @@ def _ask(args: argparse.Namespace) -> int:
             )
         print()
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
     model = args.model or settings.answer_model
     effort = args.effort or settings.answer_effort
     _print_answer(answer_question(client, model, args.question, chunks, effort=effort))
@@ -129,9 +137,18 @@ def _eval_retrieval(args: argparse.Namespace) -> int:
 
     cases = load_cases(Path(args.dataset))
     settings = get_settings()
+    resolved: dict[str, list[str]] = {}  # question -> tickers from query understanding
     with get_sync_sessionmaker()() as session:
         if args.check_labels:
             return _check_labels(cases, session)
+
+        if args.auto_tickers:
+            client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+            companies = list_companies(session)
+            for case in cases:
+                resolved[case.question] = resolve_tickers(
+                    client, settings.query_model, case.question, companies
+                ).tickers
 
         with VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder:
 
@@ -140,12 +157,27 @@ def _eval_retrieval(args: argparse.Namespace) -> int:
             ) -> list[RetrievedChunk]:
                 if args.ignore_tickers:
                     tickers = None  # search every company, as if the user named none
+                elif args.auto_tickers:
+                    tickers = resolved[question] or None  # what production would search
                 return hybrid_search(session, embedder, question, tickers=tickers, k=k, mode=mode)
 
             reports = [evaluate(cases, search, mode=m, k=args.k) for m in args.modes]
 
-    scope = "all companies" if args.ignore_tickers else "case tickers"
+    scope = (
+        "all companies"
+        if args.ignore_tickers
+        else "tickers resolved from the question"
+        if args.auto_tickers
+        else "case tickers"
+    )
     print(f"{len(cases)} cases, k={args.k}, search scope: {scope}\n")
+    if args.auto_tickers:
+        right = sum(sorted(resolved[c.question]) == sorted(c.tickers or []) for c in cases)
+        print(f"Ticker resolution: {right}/{len(cases)} match the labelled tickers")
+        for c in cases:
+            if sorted(resolved[c.question]) != sorted(c.tickers or []):
+                print(f"  {c.id}: resolved {resolved[c.question]}, labelled {c.tickers}")
+        print()
     print(f"{'mode':10} {'Recall@' + str(args.k):>10} {'MRR':>7}")
     for r in reports:
         print(f"{r.mode:10} {r.recall_at_k:>10.2f} {r.mrr:>7.2f}")
@@ -189,6 +221,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     ev.add_argument(
         "--check-labels", action="store_true", help="verify label phrases; no API calls"
+    )
+    ev.add_argument(
+        "--auto-tickers",
+        action="store_true",
+        help="resolve tickers from each question with the query model, as production does",
     )
     ev.add_argument(
         "--ignore-tickers",

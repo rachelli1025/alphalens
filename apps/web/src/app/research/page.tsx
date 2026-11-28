@@ -16,7 +16,7 @@ const EXAMPLES = [
 
 export default function ResearchPage() {
   const [question, setQuestion] = useState("");
-  const [ticker, setTicker] = useState("AAPL");
+  const [ticker, setTicker] = useState(""); // empty = let the API infer companies
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AskResponse | null>(null);
@@ -73,7 +73,7 @@ export default function ResearchPage() {
         <input
           value={ticker}
           onChange={(e) => setTicker(e.target.value)}
-          placeholder="Ticker"
+          placeholder="Auto"
           aria-label="Ticker"
           className="w-24 rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm uppercase dark:border-neutral-700"
         />
@@ -139,7 +139,8 @@ export default function ResearchPage() {
           <section>
             <AnswerView parts={result.parts} selected={selected} onSelect={setSelected} />
             <p className="mt-6 text-xs text-neutral-400">
-              {result.model} · {result.input_tokens.toLocaleString()} in /{" "}
+              {result.tickers.length ? result.tickers.join(", ") : "All companies"}
+              {result.tickers_resolved ? " (detected)" : ""} · {result.model} · {result.input_tokens.toLocaleString()} in /{" "}
               {result.output_tokens.toLocaleString()} out tokens ·{" "}
               {result.cost_usd !== null ? `$${result.cost_usd.toFixed(4)}` : "cost unknown"} ·{" "}
               {result.sources.length} sources

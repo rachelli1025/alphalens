@@ -19,6 +19,7 @@ from alphalens_core.answer import Answer, answer_question
 from alphalens_core.config import Settings, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import EmbeddingError, VoyageEmbedder
+from alphalens_core.query_understanding import TickerResolution, list_companies, resolve_tickers
 from alphalens_core.retrieval import RetrievedChunk, hybrid_search
 
 log = logging.getLogger(__name__)
@@ -79,13 +80,16 @@ class AskResponse(BaseModel):
     model: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float | None  # list-price estimate; None for models missing from the price table
+    cost_usd: float | None  # list-price estimate (answer + ticker resolution); None if unknown
     refused: bool
+    tickers: list[str]  # companies searched; empty = all companies
+    tickers_resolved: bool  # True if inferred from the question rather than given by the caller
 
 
 # ---------- dependencies (overridden in tests) ----------
 
 Retriever = Callable[[str, list[str] | None, int], list[RetrievedChunk]]
+TickerResolver = Callable[[str], TickerResolution]
 
 
 @lru_cache
@@ -114,10 +118,22 @@ def get_retriever(
     return retrieve
 
 
+def get_ticker_resolver(
+    session: Annotated[Session, Depends(get_session)],
+    claude: Annotated[anthropic.Anthropic, Depends(get_claude)],
+) -> TickerResolver:
+    def resolve(question: str) -> TickerResolution:
+        return resolve_tickers(
+            claude, get_settings().query_model, question, list_companies(session)
+        )
+
+    return resolve
+
+
 # ---------- endpoint ----------
 
 
-def to_response(answer: Answer) -> AskResponse:
+def to_response(answer: Answer, resolution: TickerResolution, resolved: bool) -> AskResponse:
     sources: list[SourceOut] = []
     index: dict[int, int] = {}  # chunk_id -> position in sources
     parts = []
@@ -147,8 +163,14 @@ def to_response(answer: Answer) -> AskResponse:
         model=answer.model,
         input_tokens=answer.input_tokens,
         output_tokens=answer.output_tokens,
-        cost_usd=answer.cost_usd,
+        cost_usd=(
+            None
+            if answer.cost_usd is None or resolution.cost_usd is None
+            else answer.cost_usd + resolution.cost_usd
+        ),
         refused=answer.refused,
+        tickers=resolution.tickers,
+        tickers_resolved=resolved,
     )
 
 
@@ -159,11 +181,18 @@ def ask(
     req: AskRequest,
     retrieve: Annotated[Retriever, Depends(get_retriever)],
     claude: Annotated[anthropic.Anthropic, Depends(get_claude)],
+    resolve: Annotated[TickerResolver, Depends(get_ticker_resolver)],
 ) -> AskResponse:
+    # Caller-given tickers win; otherwise infer them from the question (never raises).
+    if req.tickers:
+        resolution, resolved = TickerResolution(tickers=[t.upper() for t in req.tickers]), False
+    else:
+        resolution, resolved = resolve(req.question), True
+
     # Upstream errors are logged in full but returned to callers as generic messages:
     # raw provider errors include request IDs and account details.
     try:
-        chunks = retrieve(req.question, req.tickers, req.k)
+        chunks = retrieve(req.question, resolution.tickers or None, req.k)
     except EmbeddingError as exc:
         log.exception("embedding failed")
         raise HTTPException(status_code=502, detail="search is temporarily unavailable") from exc
@@ -179,4 +208,4 @@ def ask(
             status_code=502, detail="the answer service is temporarily unavailable"
         ) from exc
 
-    return to_response(answer)
+    return to_response(answer, resolution, resolved)

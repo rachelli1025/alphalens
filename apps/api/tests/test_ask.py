@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 
 from alphalens_core.config import Settings, get_settings
 from alphalens_core.embeddings import EmbeddingError
+from alphalens_core.query_understanding import TickerResolution
 from alphalens_core.retrieval import RetrievedChunk
 from app.main import app
-from app.routers.ask import get_claude, get_retriever
+from app.routers.ask import get_claude, get_retriever, get_ticker_resolver
 
 
 def _chunk(i: int, item: str = "1A") -> RetrievedChunk:
@@ -85,6 +86,17 @@ def client(seen: dict[str, Any]) -> Iterator[TestClient]:
         ]
     )
     seen["claude"] = claude
+
+    def fake_resolver() -> Any:
+        def resolve(question: str) -> TickerResolution:
+            seen["resolved_question"] = question
+            return TickerResolution(
+                tickers=["AAPL"], input_tokens=600, output_tokens=15, model="claude-haiku-5-5"
+            )
+
+        return resolve
+
+    app.dependency_overrides[get_ticker_resolver] = fake_resolver
     app.dependency_overrides[get_retriever] = fake_retriever
     app.dependency_overrides[get_claude] = lambda: claude
     yield TestClient(app)
@@ -108,6 +120,9 @@ def test_ask_returns_parts_and_deduplicated_sources(
     assert (body["input_tokens"], body["output_tokens"]) == (900, 60)
     assert body["cost_usd"] == pytest.approx((900 * 4 + 60 * 20) / 1_000_000)
     assert seen["tickers"] == ["AAPL"]
+    assert body["tickers"] == ["AAPL"]
+    assert body["tickers_resolved"] is False  # caller gave tickers: no resolution call
+    assert "resolved_question" not in seen
     assert seen["k"] == 8
 
 
@@ -164,3 +179,16 @@ def test_correct_access_key_is_accepted(client: TestClient) -> None:
 def test_health_endpoints_stay_open(client: TestClient) -> None:
     _with_key("s3cret")
     assert client.get("/healthz").status_code == 200
+
+
+def test_tickers_are_resolved_when_not_given(client: TestClient, seen: dict[str, Any]) -> None:
+    resp = client.post("/api/ask", json={"question": "How many people does Apple employ?"})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert seen["resolved_question"] == "How many people does Apple employ?"
+    assert seen["tickers"] == ["AAPL"]  # resolved tickers drive retrieval
+    assert body["tickers"] == ["AAPL"]
+    assert body["tickers_resolved"] is True
+    # Cost includes the Haiku resolution call: 600 in / 15 out at $0.10 / $0.50 per 1M.
+    answer_cost = (900 * 4 + 60 * 20) / 1_000_000
+    assert body["cost_usd"] == pytest.approx(answer_cost + (600 * 0.10 + 15 * 0.50) / 1_000_000)

@@ -32,6 +32,8 @@ export type AskResponse = {
   output_tokens: number;
   cost_usd: number | null; // list-price estimate; null for models without a known price
   refused: boolean;
+  tickers: string[]; // companies searched; empty = all companies
+  tickers_resolved: boolean; // true if inferred from the question
 };
 
 export class UnauthorizedError extends Error {}

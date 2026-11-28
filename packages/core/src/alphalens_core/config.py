@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # /api/ask and `alphalens ask`. Haiku until the answer eval exists (DESIGN.md D7).
     answer_model: str = "claude-haiku-5-5"
     answer_effort: str = "medium"  # low | medium | high | xhigh | max
+    # Query understanding: which companies a question is about (DESIGN.md §8, first step).
+    query_model: str = "claude-haiku-5-5"
     extraction_model: str = "claude-haiku-5-5"
     embedding_model: str = "voyage-finance-2"
     embedding_dim: int = 1024
