@@ -10,6 +10,7 @@ normalized against each other.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import bindparam, select, text
@@ -20,6 +21,14 @@ from alphalens_core.embeddings import Embedder
 
 RRF_K = 60  # standard constant from the RRF paper; damps the weight of top ranks
 CANDIDATES = 50  # how many results each search contributes before fusion
+
+# "vector" / "keyword" keep only one list in the fusion step; used for eval ablations.
+SearchMode = Literal["hybrid", "vector", "keyword"]
+_SOURCES: dict[str, list[str]] = {
+    "hybrid": ["vec", "kw"],
+    "vector": ["vec"],
+    "keyword": ["kw"],
+}
 
 # Keyword side uses OR between terms: plainto_tsquery ANDs every word, which for a
 # natural-language question ("what are apple's main supply chain risks") usually
@@ -52,6 +61,7 @@ fused AS (
         UNION ALL
         SELECT id, r, 'kw' AS src FROM kw
     ) both_lists
+    WHERE src = ANY(:sources)
     GROUP BY id
 )
 SELECT c.id, c.content, c.context_header, s.item_code, s.title AS section_title,
@@ -91,9 +101,11 @@ def hybrid_search(
     *,
     tickers: list[str] | None = None,
     k: int = 8,
+    mode: SearchMode = "hybrid",
 ) -> list[RetrievedChunk]:
     """Top-k chunks for a question, optionally restricted to some companies."""
     params: dict[str, object] = {
+        "sources": _SOURCES[mode],
         "qtext": question,
         "qvec": embedder.embed([question], "query")[0],
         "candidates": CANDIDATES,

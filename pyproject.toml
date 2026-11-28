@@ -17,6 +17,7 @@ dev = [
     "mypy>=1.13",
     "pre-commit>=4.0",
     "httpx2",
+    "types-pyyaml>=6.0.12.20261122",
 ]
 
 [tool.ruff]
