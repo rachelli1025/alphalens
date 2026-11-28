@@ -84,3 +84,23 @@ def test_xhtml_with_xml_declaration_does_not_warn() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # turn any warning into an exception
         assert html_to_text(html) == "hi"
+
+
+def test_repeated_page_header_does_not_truncate_section() -> None:
+    # Microsoft-style filings repeat "Item 1" at the top of every page of Item 1.
+    body_page_1 = "Business page one. " * 60
+    body_page_2 = "Business page two. " * 60
+    text = "\n".join(
+        [
+            "Item 1. Business",
+            body_page_1,
+            "Item 1",  # running page header
+            body_page_2,
+            "Item 1A. Risk Factors",
+            "Risk text. " * 80,
+        ]
+    )
+    sections = {s.item_code: s for s in split_10k_items(text)}
+    assert sections["1"].text.startswith("Business page one.")
+    assert "Business page two." in sections["1"].text
+    assert sections["1A"].text.startswith("Risk text.")
