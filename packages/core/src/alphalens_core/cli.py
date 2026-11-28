@@ -20,7 +20,8 @@ from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import VoyageEmbedder
 from alphalens_core.ingest import ingest_latest_filing
 from alphalens_core.query_understanding import list_companies, resolve_tickers
-from alphalens_core.retrieval import RetrievedChunk, SearchMode, hybrid_search
+from alphalens_core.reranking import VoyageReranker
+from alphalens_core.retrieval import RetrievedChunk, hybrid_search, rerank_search
 from alphalens_core.sec import EdgarClient
 
 
@@ -86,12 +87,21 @@ def _ask(args: argparse.Namespace) -> int:
             )
             tickers = resolution.tickers
             print(f"Companies detected: {', '.join(tickers) or 'none (searching all)'}\n")
-        chunks = hybrid_search(session, embedder, args.question, tickers=tickers or None, k=args.k)
+        if settings.rerank_enabled:
+            with VoyageReranker(settings.voyage_api_key, settings.rerank_model) as reranker:
+                chunks = rerank_search(
+                    session, embedder, reranker, args.question, tickers=tickers or None, k=args.k
+                )
+        else:
+            chunks = hybrid_search(
+                session, embedder, args.question, tickers=tickers or None, k=args.k
+            )
 
     if args.show_chunks:
         for i, c in enumerate(chunks, 1):
             print(
-                f"{i}. score={c.score:.4f} vec_rank={c.vec_rank} kw_rank={c.kw_rank} "
+                f"{i}. rerank={c.rerank_score} rrf={c.score:.4f} "
+                f"vec_rank={c.vec_rank} kw_rank={c.kw_rank} "
                 f"{c.context_header}\n   {c.content[:150]!r}"
             )
         print()
@@ -133,7 +143,7 @@ def _check_labels(cases: list, session) -> int:  # type: ignore[type-arg, no-unt
 
 
 def _eval_retrieval(args: argparse.Namespace) -> int:
-    from alphalens_core.evals.retrieval import evaluate, load_cases
+    from alphalens_core.evals.retrieval import EvalMode, evaluate, load_cases
 
     cases = load_cases(Path(args.dataset))
     settings = get_settings()
@@ -150,15 +160,22 @@ def _eval_retrieval(args: argparse.Namespace) -> int:
                     client, settings.query_model, case.question, companies
                 ).tickers
 
-        with VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder:
+        with (
+            VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder,
+            VoyageReranker(settings.voyage_api_key, settings.rerank_model) as reranker,
+        ):
 
             def search(
-                question: str, tickers: list[str] | None, k: int, mode: SearchMode
+                question: str, tickers: list[str] | None, k: int, mode: EvalMode
             ) -> list[RetrievedChunk]:
                 if args.ignore_tickers:
                     tickers = None  # search every company, as if the user named none
                 elif args.auto_tickers:
                     tickers = resolved[question] or None  # what production would search
+                if mode == "rerank":
+                    return rerank_search(
+                        session, embedder, reranker, question, tickers=tickers, k=k
+                    )
                 return hybrid_search(session, embedder, question, tickers=tickers, k=k, mode=mode)
 
             reports = [evaluate(cases, search, mode=m, k=args.k) for m in args.modes]
@@ -216,8 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument(
         "--modes",
         nargs="+",
-        choices=["hybrid", "vector", "keyword"],
-        default=["hybrid", "vector", "keyword"],
+        choices=["hybrid", "vector", "keyword", "rerank"],
+        default=["hybrid", "vector", "keyword", "rerank"],
     )
     ev.add_argument(
         "--check-labels", action="store_true", help="verify label phrases; no API calls"
