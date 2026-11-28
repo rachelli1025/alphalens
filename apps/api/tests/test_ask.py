@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from alphalens_core.config import Settings, get_settings
 from alphalens_core.embeddings import EmbeddingError
 from alphalens_core.retrieval import RetrievedChunk
 from app.main import app
@@ -134,5 +135,32 @@ def test_embedding_failure_is_502(client: TestClient, seen: dict[str, Any]) -> N
     app.dependency_overrides[get_retriever] = broken
     resp = client.post("/api/ask", json={"question": "What are the risks?"})
     assert resp.status_code == 502
-    assert "embedding" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "unavailable" in detail
+    assert "429" not in detail  # upstream details stay in server logs
     assert seen["claude"].calls == 0  # never reached Claude
+
+
+def _with_key(key: str) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(access_key=key)
+
+
+@pytest.mark.parametrize("header", [None, "wrong-key", ""])
+def test_access_key_required_when_configured(client: TestClient, header: str | None) -> None:
+    _with_key("s3cret")
+    headers = {} if header is None else {"X-Access-Key": header}
+    resp = client.post("/api/ask", json={"question": "What are the risks?"}, headers=headers)
+    assert resp.status_code == 401
+
+
+def test_correct_access_key_is_accepted(client: TestClient) -> None:
+    _with_key("s3cret")
+    resp = client.post(
+        "/api/ask", json={"question": "What are the risks?"}, headers={"X-Access-Key": "s3cret"}
+    )
+    assert resp.status_code == 200
+
+
+def test_health_endpoints_stay_open(client: TestClient) -> None:
+    _with_key("s3cret")
+    assert client.get("/healthz").status_code == 200
