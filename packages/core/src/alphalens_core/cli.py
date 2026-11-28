@@ -138,11 +138,14 @@ def _eval_retrieval(args: argparse.Namespace) -> int:
             def search(
                 question: str, tickers: list[str] | None, k: int, mode: SearchMode
             ) -> list[RetrievedChunk]:
+                if args.ignore_tickers:
+                    tickers = None  # search every company, as if the user named none
                 return hybrid_search(session, embedder, question, tickers=tickers, k=k, mode=mode)
 
             reports = [evaluate(cases, search, mode=m, k=args.k) for m in args.modes]
 
-    print(f"{len(cases)} cases, k={args.k}\n")
+    scope = "all companies" if args.ignore_tickers else "case tickers"
+    print(f"{len(cases)} cases, k={args.k}, search scope: {scope}\n")
     print(f"{'mode':10} {'Recall@' + str(args.k):>10} {'MRR':>7}")
     for r in reports:
         print(f"{r.mode:10} {r.recall_at_k:>10.2f} {r.mrr:>7.2f}")
@@ -186,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     ev.add_argument(
         "--check-labels", action="store_true", help="verify label phrases; no API calls"
+    )
+    ev.add_argument(
+        "--ignore-tickers",
+        action="store_true",
+        help="search all companies instead of each case's tickers (no query understanding)",
     )
     ev.set_defaults(func=_eval_retrieval)
 
