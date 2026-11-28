@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from alphalens_core.answer import Answer, answer_question
+from alphalens_core.answer import Answer, AnswerPart, answer_question
 from alphalens_core.config import Settings, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import EmbeddingError, VoyageEmbedder
@@ -143,11 +143,12 @@ def get_ticker_resolver(
 # ---------- endpoint ----------
 
 
-def to_response(answer: Answer, resolution: TickerResolution, resolved: bool) -> AskResponse:
+def serialize_parts(answer_parts: list[AnswerPart]) -> tuple[list[PartOut], list[SourceOut]]:
+    """Answer parts with citations as indexes into a list of the cited chunks."""
     sources: list[SourceOut] = []
     index: dict[int, int] = {}  # chunk_id -> position in sources
     parts = []
-    for part in answer.parts:
+    for part in answer_parts:
         citations = []
         for c in part.citations:
             if c.chunk.chunk_id not in index:
@@ -166,6 +167,11 @@ def to_response(answer: Answer, resolution: TickerResolution, resolved: bool) ->
                 )
             citations.append(CitationOut(source=index[c.chunk.chunk_id], cited_text=c.cited_text))
         parts.append(PartOut(text=part.text, citations=citations))
+    return parts, sources
+
+
+def to_response(answer: Answer, resolution: TickerResolution, resolved: bool) -> AskResponse:
+    parts, sources = serialize_parts(answer.parts)
     return AskResponse(
         answer=answer.text,
         parts=parts,
