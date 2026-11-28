@@ -4,22 +4,42 @@ W1 simplification of DESIGN.md §11: stateless and non-streaming. W3 replaces it
 with /api/chat/conversations/{id}/messages (history + SSE streaming).
 """
 
+import hmac
+import logging
 from collections.abc import Callable, Iterator
 from functools import lru_cache
 from typing import Annotated
 
 import anthropic
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from alphalens_core.answer import Answer, answer_question
-from alphalens_core.config import get_settings
+from alphalens_core.config import Settings, get_settings
 from alphalens_core.db.session import get_sync_sessionmaker
 from alphalens_core.embeddings import EmbeddingError, VoyageEmbedder
 from alphalens_core.retrieval import RetrievedChunk, hybrid_search
 
-router = APIRouter(prefix="/api", tags=["ask"])
+log = logging.getLogger(__name__)
+
+
+def require_access_key(
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_access_key: Annotated[str | None, Header()] = None,
+) -> None:
+    """Every /api/ask call spends real money, so deployed instances require a shared key.
+
+    compare_digest takes the same time whether the first or last character is wrong,
+    so the key cannot be guessed one character at a time from response timings.
+    """
+    if not settings.access_key:
+        return
+    if x_access_key is None or not hmac.compare_digest(x_access_key, settings.access_key):
+        raise HTTPException(status_code=401, detail="missing or invalid access key")
+
+
+router = APIRouter(prefix="/api", tags=["ask"], dependencies=[Depends(require_access_key)])
 
 
 # ---------- request / response schemas ----------
@@ -140,19 +160,23 @@ def ask(
     retrieve: Annotated[Retriever, Depends(get_retriever)],
     claude: Annotated[anthropic.Anthropic, Depends(get_claude)],
 ) -> AskResponse:
+    # Upstream errors are logged in full but returned to callers as generic messages:
+    # raw provider errors include request IDs and account details.
     try:
         chunks = retrieve(req.question, req.tickers, req.k)
     except EmbeddingError as exc:
-        raise HTTPException(status_code=502, detail=f"embedding service error: {exc}") from exc
+        log.exception("embedding failed")
+        raise HTTPException(status_code=502, detail="search is temporarily unavailable") from exc
 
     try:
         settings = get_settings()
         answer = answer_question(
             claude, settings.answer_model, req.question, chunks, effort=settings.answer_effort
         )
-    except anthropic.APIStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Claude API error: {exc.message}") from exc
-    except anthropic.APIConnectionError as exc:
-        raise HTTPException(status_code=502, detail="could not reach the Claude API") from exc
+    except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+        log.exception("Claude call failed")
+        raise HTTPException(
+            status_code=502, detail="the answer service is temporarily unavailable"
+        ) from exc
 
     return to_response(answer)

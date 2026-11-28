@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     sec_user_agent: str = ""
 
+    # API access control (see apps/api/app/routers/ask.py). Empty = no key required,
+    # which is only acceptable locally: deployed instances must set ACCESS_KEY.
+    access_key: str = ""
+    # Comma-separated browser origins allowed to call the API.
+    cors_origins: str = "http://localhost:3000"
+
     # Models (see docs/DESIGN.md §4.3)
     agent_model: str = "claude-opus-5-5"  # W3 research agent
     # /api/ask and `alphalens ask`. Haiku until the answer eval exists (DESIGN.md D7).
@@ -26,6 +32,10 @@ class Settings(BaseSettings):
     extraction_model: str = "claude-haiku-5-5"
     embedding_model: str = "voyage-finance-2"
     embedding_dim: int = 1024
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache

@@ -1,10 +1,12 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import AnswerView, { type Selection } from "@/components/AnswerView";
 import CitationPanel from "@/components/CitationPanel";
-import { type AskResponse, askQuestion } from "@/lib/api";
+import { type AskResponse, UnauthorizedError, askQuestion } from "@/lib/api";
+
+const ACCESS_KEY_STORAGE = "alphalens.accessKey";
 
 const EXAMPLES = [
   "What are Apple's main supply chain risks?",
@@ -19,6 +21,18 @@ export default function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AskResponse | null>(null);
   const [selected, setSelected] = useState<Selection | null>(null);
+  const [accessKey, setAccessKey] = useState("");
+  const [needsKey, setNeedsKey] = useState(false);
+
+  // localStorage only exists in the browser, so read it after the first render.
+  useEffect(() => {
+    setAccessKey(window.localStorage.getItem(ACCESS_KEY_STORAGE) ?? "");
+  }, []);
+
+  function updateAccessKey(value: string) {
+    setAccessKey(value);
+    window.localStorage.setItem(ACCESS_KEY_STORAGE, value);
+  }
 
   async function submit(q: string) {
     if (q.trim().length < 3 || loading) return;
@@ -29,8 +43,9 @@ export default function ResearchPage() {
     setSelected(null);
     try {
       const tickers = ticker.trim() ? [ticker.trim().toUpperCase()] : [];
-      setResult(await askQuestion(q.trim(), tickers));
+      setResult(await askQuestion(q.trim(), tickers, accessKey.trim()));
     } catch (err) {
+      if (err instanceof UnauthorizedError) setNeedsKey(true);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -77,6 +92,20 @@ export default function ResearchPage() {
           {loading ? "Thinking…" : "Ask"}
         </button>
       </form>
+
+      {(needsKey || accessKey) && (
+        <label className="mt-3 flex items-center gap-2 text-xs text-neutral-500">
+          Access key
+          <input
+            type="password"
+            value={accessKey}
+            onChange={(e) => updateAccessKey(e.target.value)}
+            autoComplete="off"
+            className="w-56 rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-xs dark:border-neutral-700"
+          />
+          <span>saved in this browser only</span>
+        </label>
+      )}
 
       {!result && !loading && !error && (
         <div className="mt-4 flex flex-wrap gap-2">
