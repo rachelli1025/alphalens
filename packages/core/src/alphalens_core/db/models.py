@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -116,4 +117,44 @@ class Chunk(TimestampMixin, Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
+    )
+
+
+class FinancialFact(TimestampMixin, Base):
+    """One standardized metric value from SEC XBRL company facts (DESIGN.md §7.2).
+
+    Long format: one row per (company, metric, period, filing). The same number is
+    reported again as a comparative in later filings and may be restated, so the
+    filing (accession_no) is part of the key; v_financials picks the latest filed.
+    """
+
+    __tablename__ = "financial_facts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    concept: Mapped[str] = mapped_column(String(64), nullable=False)  # standardized, e.g. revenue
+    source_tag: Mapped[str] = mapped_column(String(128), nullable=False)  # e.g. us-gaap:Revenues
+    value: Mapped[float] = mapped_column(Numeric(24, 4), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)  # USD, USD/shares, shares
+    period_start: Mapped[date | None] = mapped_column(Date)  # NULL for point-in-time values
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    # Fiscal labels of the period itself (not of the filing that reported it); NULL when
+    # no filing in the data reports this period as its current period.
+    fiscal_year: Mapped[int | None] = mapped_column(Integer)
+    fiscal_period: Mapped[str | None] = mapped_column(String(4))  # FY, Q1, Q2, Q3
+    form_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    filed_at: Mapped[date] = mapped_column(Date, nullable=False)
+    accession_no: Mapped[str] = mapped_column(String(25), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "concept",
+            "period_start",
+            "period_end",
+            "accession_no",
+            name="uq_financial_facts_natural_key",
+            postgresql_nulls_not_distinct=True,  # point-in-time rows have no period_start
+        ),
+        Index("ix_financial_facts_lookup", "company_id", "concept", "fiscal_year"),
     )

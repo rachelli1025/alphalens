@@ -16,6 +16,7 @@ import httpx
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{document}"
 
 RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -153,6 +154,10 @@ class EdgarClient:
         if not refs:
             raise EdgarError(f"no {form_type} found for CIK {cik}")
         return refs[0]
+
+    def company_facts(self, cik: str) -> Any:
+        """Every XBRL fact the company has filed (see alphalens_core.xbrl)."""
+        return self._get_json(COMPANY_FACTS_URL.format(cik=cik))
 
     def download(self, url: str) -> str:
         return self._get(url).text
