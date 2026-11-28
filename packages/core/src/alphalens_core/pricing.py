@@ -16,9 +16,27 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5"}
 
 
-def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
+# Prompt caching multipliers on the input price (5-minute cache).
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.10
+
+
+def cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_write_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> float | None:
+    """`input_tokens` excludes cached tokens, as in the API's usage block."""
     prices = PRICES_PER_MTOK.get(model)
     if prices is None:
         return None
     price_in, price_out = prices
-    return (input_tokens * price_in + output_tokens * price_out) / 1_000_000
+    billed_input = (
+        input_tokens
+        + cache_write_tokens * CACHE_WRITE_MULTIPLIER
+        + cache_read_tokens * CACHE_READ_MULTIPLIER
+    )
+    return (billed_input * price_in + output_tokens * price_out) / 1_000_000

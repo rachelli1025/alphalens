@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # Models (see docs/DESIGN.md §4.3)
-    agent_model: str = "claude-opus-5-5"  # W3 research agent
+    # W3 research agent. Haiku while developing (cost); DESIGN.md plans Opus 5.5 and the
+    # agent eval decides. Set AGENT_MODEL=claude-opus-5-5 to switch.
+    agent_model: str = "claude-haiku-5-5"
+    agent_effort: str = "medium"
     # /api/ask and `alphalens ask`. Haiku until the answer eval exists (DESIGN.md D7).
     answer_model: str = "claude-haiku-5-5"
     answer_effort: str = "medium"  # low | medium | high | xhigh | max

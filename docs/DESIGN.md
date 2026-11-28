@@ -333,7 +333,7 @@ Semantic caching (embedding similarity between questions) is deferred: a near-ma
 | Tool | Purpose |
 |---|---|
 | `search_filings(query, tickers?, form_types?, date_range?, sections?)` | Qualitative questions, through hybrid RAG |
-| `query_financials(question)` | Quantitative questions, through guarded text-to-SQL |
+| `query_financials(sql)` | Quantitative questions, through guarded text-to-SQL. The agent writes the SQL itself from the view schema in the tool description (no second model call); guard errors go back to it as error results to fix |
 | `search_news_events(tickers, date_range, event_types?, min_abs_sentiment?)` | News and events |
 | `get_sentiment_series(ticker, date_range)` | Sentiment trend |
 | `get_price_series(ticker, date_range)` | Prices |
@@ -344,7 +344,8 @@ Semantic caching (embedding similarity between questions) is deferred: a near-ma
 2. `sqlglot` parses the generated SQL. Only a single `SELECT` that references allow-listed views is accepted.
 3. `LIMIT 500` is injected when it is missing.
 4. The query runs under a read-only role with `statement_timeout = 3s`.
-5. On error, the message is returned to the model, with at most 2 repair attempts.
+5. On error, the message is returned to the model as an error tool result; repairs count toward the 8-call cap.
+6. Table functions in FROM (`generate_series`, …) and server functions (`pg_*`, `dblink`, `current_setting`, …) are rejected. A dedicated read-only database role is still to do; `SET TRANSACTION READ ONLY` covers writes until then.
 
 ### 9.3 Loop
 - A self-hosted tool-use loop on the Messages API inside FastAPI ([ADR-0003](adr/0003-self-hosted-agent-loop.md)).
@@ -540,7 +541,7 @@ Defaults are in bold and will be used unless changed.
 | D4 | News sources | Finnhub · Polygon/Massive · Reddit | **Finnhub + 8-K; Reddit in v2** |
 | D5 | Auth | Clerk · NextAuth | **Clerk** |
 | D6 | Embeddings | Voyage (paid) · bge (local, free) | **Voyage `voyage-finance-2`** |
-| D7 | Answer model for `/api/ask` | Opus 5.5 ($4 / $20 per MTok, about $0.08 per answer) · Haiku 5.5 ($0.10 / $0.50, about $0.002) | **Decided for now: Haiku 5.5** (cost during development). Configurable via `ANSWER_MODEL` and `ANSWER_EFFORT`. Re-decide with the §13 answer eval: keep Haiku if it meets the faithfulness target, otherwise move to Sonnet 5.5 or Opus 5.5. The W3 agent stays on Opus 5.5 |
+| D7 | Answer and agent model | Opus 5.5 ($4 / $20 per MTok, about $0.08 per answer) · Haiku 5.5 ($0.10 / $0.50, about $0.002) | **Decided for now: Haiku 5.5** (cost during development). Configurable via `ANSWER_MODEL` and `ANSWER_EFFORT`. Re-decide with the §13 answer eval: keep Haiku if it meets the faithfulness target, otherwise move to Sonnet 5.5 or Opus 5.5. The W3 agent also runs on Haiku 5.5 during development (`AGENT_MODEL`); the agent eval decides between Haiku, Sonnet 5.5 and Opus 5.5 |
 
 ---
 

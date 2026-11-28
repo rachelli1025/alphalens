@@ -59,6 +59,49 @@ def _ingest_financials(args: argparse.Namespace) -> int:
     return 0
 
 
+def _agent(args: argparse.Namespace) -> int:
+    from alphalens_core.agent.loop import run_agent
+    from alphalens_core.agent.tools import ToolContext
+
+    settings = get_settings()
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+    with (
+        VoyageEmbedder(settings.voyage_api_key, settings.embedding_model) as embedder,
+        VoyageReranker(settings.voyage_api_key, settings.rerank_model) as reranker,
+        get_sync_sessionmaker()() as session,
+    ):
+        ctx = ToolContext(session=session, embedder=embedder, reranker=reranker)
+        result = run_agent(
+            client,
+            args.model or settings.agent_model,
+            args.question,
+            ctx,
+            list_companies(session),
+            effort=args.effort or settings.agent_effort,
+        )
+
+    print("Tool calls:")
+    for i, call in enumerate(result.tool_calls, 1):
+        flag = " (error)" if call.is_error else ""
+        print(f"  {i}. {call.name}{flag}: {call.summary}")
+    for sql in result.sql_queries:
+        print(f"     SQL: {sql}")
+    print()
+    from alphalens_core.answer import Answer
+
+    _print_answer(
+        Answer(
+            parts=result.parts,
+            model=result.model,
+            input_tokens=result.input_tokens + result.cache_write_tokens + result.cache_read_tokens,
+            output_tokens=result.output_tokens,
+        )
+    )
+    cost = f"${result.cost_usd:.4f}" if result.cost_usd is not None else "unknown"
+    print(f"Agent cost with caching: {cost} (cache read {result.cache_read_tokens} tokens)")
+    return 0
+
+
 def _print_answer(answer: Answer) -> None:
     """Answer text with [n] markers, then the numbered sources they point to."""
     sources: dict[int, int] = {}  # chunk_id -> source number
@@ -229,6 +272,12 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--form", default="10-K")
     ingest.add_argument("--force", action="store_true", help="rebuild even if already embedded")
     ingest.set_defaults(func=_ingest)
+
+    ag = sub.add_parser("agent", help="research agent: searches filings and queries financials")
+    ag.add_argument("question")
+    ag.add_argument("--model", help="override AGENT_MODEL")
+    ag.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
+    ag.set_defaults(func=_agent)
 
     fin = sub.add_parser("ingest-financials", help="load XBRL financial facts for tickers")
     fin.add_argument("tickers", nargs="+")
